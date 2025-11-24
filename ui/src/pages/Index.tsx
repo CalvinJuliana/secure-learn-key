@@ -205,12 +205,6 @@ const Index = () => {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-2">Encrypted Handle:</p>
-                    <p className="font-mono text-xs break-all">
-                      {encryptedStudyMinutes || 'No data yet'}
-                    </p>
-                  </div>
                   {decryptedStudyMinutes !== undefined && (
                     <div className="p-4 bg-primary/10 rounded-lg">
                       <p className="text-sm text-muted-foreground mb-1">Decrypted Total:</p>
@@ -264,12 +258,6 @@ const Index = () => {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-2">Encrypted Handle:</p>
-                    <p className="font-mono text-xs break-all">
-                      {encryptedTaskCount || 'No data yet'}
-                    </p>
-                  </div>
                   {decryptedTaskCount !== undefined && (
                     <div className="p-4 bg-primary/10 rounded-lg">
                       <p className="text-sm text-muted-foreground mb-1">Decrypted Total:</p>
