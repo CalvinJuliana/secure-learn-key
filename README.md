@@ -2,6 +2,11 @@
 
 A privacy-preserving learning progress tracking application built with FHEVM (Fully Homomorphic Encryption Virtual Machine) that allows students to securely record their study minutes and task completions on-chain. All data is encrypted, and only the student can decrypt and view their progress.
 
+## 🌐 Live Demo
+
+- **Live Demo**: [https://secure-learn-key.vercel.app/](https://secure-learn-key.vercel.app/)
+- **Demo Video**: [https://github.com/CalvinJuliana/secure-learn-key/blob/main/secure-learn-key.mp4](https://github.com/CalvinJuliana/secure-learn-key/blob/main/secure-learn-key.mp4)
+
 ## 🎯 Features
 
 - **🔒 Encrypted Study Minutes**: Record study time with complete privacy
@@ -146,19 +151,116 @@ The core contract that stores encrypted learning progress on-chain.
 
 **Location**: `contracts/EncryptedLearningProgress.sol`
 
+#### Contract Code
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {FHE, euint32, externalEuint32} from "@fhevm/solidity/lib/FHE.sol";
+import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
+
+contract EncryptedLearningProgress is SepoliaConfig {
+    // Mapping from user address to their encrypted total study minutes
+    mapping(address => euint32) private _encryptedStudyMinutes;
+    
+    // Mapping from user address to their encrypted task completion count
+    mapping(address => euint32) private _encryptedTaskCount;
+    
+    // Mapping to track if user has initialized their progress
+    mapping(address => bool) private _hasInitialized;
+
+    event StudyMinutesAdded(address indexed user, uint256 timestamp);
+    event TaskCompleted(address indexed user, uint256 timestamp);
+
+    /// @notice Add study minutes to user's encrypted total
+    /// @param encryptedMinutes The encrypted number of study minutes to add
+    /// @param inputProof The FHE input proof
+    function addStudyMinutes(externalEuint32 encryptedMinutes, bytes calldata inputProof) external {
+        euint32 encryptedMinutesValue = FHE.fromExternal(encryptedMinutes, inputProof);
+        
+        // Initialize if first time
+        if (!_hasInitialized[msg.sender]) {
+            _encryptedStudyMinutes[msg.sender] = encryptedMinutesValue;
+            _hasInitialized[msg.sender] = true;
+        } else {
+            // Add to existing total using FHE addition
+            _encryptedStudyMinutes[msg.sender] = FHE.add(
+                _encryptedStudyMinutes[msg.sender],
+                encryptedMinutesValue
+            );
+        }
+
+        // Grant decryption permissions to the user
+        FHE.allowThis(_encryptedStudyMinutes[msg.sender]);
+        FHE.allow(_encryptedStudyMinutes[msg.sender], msg.sender);
+
+        emit StudyMinutesAdded(msg.sender, block.timestamp);
+    }
+
+    /// @notice Complete a task (increment task count by 1)
+    /// @param encryptedTaskCount The encrypted task count to add (typically 1)
+    /// @param inputProof The FHE input proof
+    function completeTask(externalEuint32 encryptedTaskCount, bytes calldata inputProof) external {
+        euint32 taskCount = FHE.fromExternal(encryptedTaskCount, inputProof);
+        
+        // Initialize if first time
+        if (!_hasInitialized[msg.sender]) {
+            _encryptedTaskCount[msg.sender] = taskCount;
+            _hasInitialized[msg.sender] = true;
+        } else {
+            // Add to existing count using FHE addition
+            _encryptedTaskCount[msg.sender] = FHE.add(
+                _encryptedTaskCount[msg.sender],
+                taskCount
+            );
+        }
+
+        // Grant decryption permissions to the user
+        FHE.allowThis(_encryptedTaskCount[msg.sender]);
+        FHE.allow(_encryptedTaskCount[msg.sender], msg.sender);
+
+        emit TaskCompleted(msg.sender, block.timestamp);
+    }
+
+    /// @notice Get the encrypted study minutes for a user
+    /// @param user The user address
+    /// @return encryptedMinutes The encrypted study minutes
+    function getEncryptedStudyMinutes(address user) external view returns (euint32 encryptedMinutes) {
+        return _encryptedStudyMinutes[user];
+    }
+
+    /// @notice Get the encrypted task count for a user
+    /// @param user The user address
+    /// @return encryptedTaskCount The encrypted task completion count
+    function getEncryptedTaskCount(address user) external view returns (euint32 encryptedTaskCount) {
+        return _encryptedTaskCount[user];
+    }
+
+    /// @notice Check if a user has initialized their progress
+    /// @param user The user address
+    /// @return Whether the user has initialized
+    function hasInitialized(address user) external view returns (bool) {
+        return _hasInitialized[user];
+    }
+}
+```
+
 #### Key Functions
 
 - **`addStudyMinutes(externalEuint32 encryptedMinutes, bytes calldata inputProof)`**
   - Adds study minutes to user's encrypted total
   - Accepts encrypted minutes and input proof
-  - Performs encrypted addition on-chain
+  - Performs encrypted addition on-chain using `FHE.add()`
   - Grants decryption permissions to the user
+  - Emits `StudyMinutesAdded` event
 
 - **`completeTask(externalEuint32 encryptedTaskCount, bytes calldata inputProof)`**
   - Increments task completion count by 1
   - Accepts encrypted task count (typically 1) and input proof
-  - Performs encrypted addition on-chain
+  - Performs encrypted addition on-chain using `FHE.add()`
   - Grants decryption permissions to the user
+  - Emits `TaskCompleted` event
 
 - **`getEncryptedStudyMinutes(address user)`**
   - Returns the encrypted study minutes for a user
@@ -178,92 +280,210 @@ The core contract that stores encrypted learning progress on-chain.
 
 ### Encryption Flow
 
-1. **Client-Side Encryption**:
-   ```typescript
-   // Create encrypted input using FHEVM instance
-   const encryptedInput = fhevmInstance.createEncryptedInput(
-     contractAddress,
-     userAddress
-   );
-   
-   // Add the plaintext value (study minutes or task count)
-   encryptedInput.add32(value);
-   
-   // Encrypt and get handle + proof
-   const encrypted = await encryptedInput.encrypt();
-   // Returns: { handles: string[], inputProof: string }
-   ```
+#### 1. Client-Side Encryption
 
-2. **On-Chain Submission**:
-   ```typescript
-   // Submit encrypted handle and proof to contract
-   const tx = await contract.addStudyMinutes(
-     encrypted.handles[0],      // Encrypted handle
-     encrypted.inputProof       // Cryptographic proof
-   );
-   ```
+The frontend encrypts plaintext values (study minutes or task count) before sending to the contract:
 
-3. **Contract Processing**:
-   - Contract verifies the input proof
-   - Converts external encrypted value to internal `euint32`
-   - Performs encrypted addition: `FHE.add(existingTotal, newValue)`
-   - Grants decryption permissions: `FHE.allow(encryptedValue, user)`
+```typescript
+// Create encrypted input using FHEVM instance
+const encryptedInput = fhevmInstance.createEncryptedInput(
+  contractAddress as `0x${string}`,
+  userAddress as `0x${string}`
+);
+
+// Add the plaintext value (study minutes or task count)
+encryptedInput.add32(minutes); // or taskCount
+
+// Encrypt and get handle + proof
+const encrypted = await encryptedInput.encrypt();
+// Returns: { handles: string[], inputProof: string }
+```
+
+**Key Points:**
+- `createEncryptedInput()` creates an encryption session for a specific contract and user
+- `add32()` adds a 32-bit unsigned integer value to the encryption session
+- `encrypt()` generates the encrypted handle and cryptographic proof
+- The `inputProof` is used by the contract to verify the encrypted input
+
+#### 2. On-Chain Submission
+
+The encrypted handle and proof are submitted to the contract:
+
+```typescript
+// Submit encrypted handle and proof to contract
+const tx = await contract.addStudyMinutes(
+  encrypted.handles[0],      // Encrypted handle (bytes32)
+  encrypted.inputProof       // Cryptographic proof (bytes)
+);
+await tx.wait();
+```
+
+**Key Points:**
+- The handle is a 66-character hex string (0x + 64 hex characters)
+- The input proof verifies that the encrypted value was created correctly
+- The transaction is sent to the blockchain and waits for confirmation
+
+#### 3. Contract Processing
+
+The contract processes the encrypted input:
+
+```solidity
+// Contract verifies the input proof and converts to internal format
+euint32 encryptedMinutesValue = FHE.fromExternal(encryptedMinutes, inputProof);
+
+// Initialize or accumulate
+if (!_hasInitialized[msg.sender]) {
+    _encryptedStudyMinutes[msg.sender] = encryptedMinutesValue;
+    _hasInitialized[msg.sender] = true;
+} else {
+    // Perform encrypted addition on-chain
+    _encryptedStudyMinutes[msg.sender] = FHE.add(
+        _encryptedStudyMinutes[msg.sender],
+        encryptedMinutesValue
+    );
+}
+
+// Grant decryption permissions
+FHE.allowThis(_encryptedStudyMinutes[msg.sender]);
+FHE.allow(_encryptedStudyMinutes[msg.sender], msg.sender);
+```
+
+**Key Points:**
+- `FHE.fromExternal()` verifies the input proof and converts external format to internal `euint32`
+- `FHE.add()` performs encrypted addition without decrypting the values
+- `FHE.allow()` grants decryption permissions to the contract and user
+- The encrypted total is stored on-chain in encrypted form
 
 ### Decryption Flow
 
-1. **Get Encrypted Handle**:
-   ```typescript
-   // Fetch latest encrypted value from contract
-   const encryptedValue = await contract.getEncryptedStudyMinutes(userAddress);
-   const handle = ethers.hexlify(encryptedValue);
-   ```
+#### 1. Get Encrypted Handle
 
-2. **Generate Decryption Keypair**:
-   ```typescript
-   // Generate keypair for EIP712 signature
-   const keypair = fhevmInstance.generateKeypair();
-   ```
+Fetch the latest encrypted value from the contract:
 
-3. **Create EIP712 Signature**:
-   ```typescript
-   // Create EIP712 typed data for decryption request
-   const eip712 = fhevmInstance.createEIP712(
-     keypair.publicKey,
-     [contractAddress],
-     startTimestamp,
-     durationDays
-   );
-   
-   // Sign with user's wallet
-   const signature = await signer.signTypedData(
-     eip712.domain,
-     { UserDecryptRequestVerification: eip712.types.UserDecryptRequestVerification },
-     eip712.message
-   );
-   ```
+```typescript
+// Fetch latest encrypted value from contract
+const encryptedValue = await contract.getEncryptedStudyMinutes(userAddress);
+const handle = typeof encryptedValue === "string" 
+  ? encryptedValue 
+  : ethers.hexlify(encryptedValue);
+const normalizedHandle = handle.toLowerCase();
+```
 
-4. **Decrypt**:
-   ```typescript
-   // For local network, remove "0x" prefix from signature
-   const signatureForDecrypt = chainId === 31337 
-     ? signature.replace("0x", "") 
-     : signature;
-   
-   // Decrypt using FHEVM instance
-   const decryptedResult = await fhevmInstance.userDecrypt(
-     [{ handle, contractAddress }],
-     keypair.privateKey,
-     keypair.publicKey,
-     signatureForDecrypt,
-     [contractAddress],
-     userAddress,
-     startTimestamp,
-     durationDays
-   );
-   
-   // Extract decrypted value
-   const decryptedValue = Number(decryptedResult[handle] || 0);
-   ```
+**Key Points:**
+- The handle is returned as a `bytes32` value
+- It must be normalized to lowercase for decryption
+- The handle format is 66 characters (0x + 64 hex characters)
+
+#### 2. Generate Decryption Keypair
+
+Generate a keypair for EIP712 signature:
+
+```typescript
+// Generate keypair for EIP712 signature
+const keypair = fhevmInstance.generateKeypair();
+// Returns: { publicKey: Uint8Array, privateKey: Uint8Array }
+```
+
+**Key Points:**
+- The keypair is used for cryptographic authentication
+- The public key is included in the EIP712 signature
+- The private key is used for decryption
+
+#### 3. Create EIP712 Signature
+
+Create and sign an EIP712 typed data message:
+
+```typescript
+// Create EIP712 typed data for decryption request
+const contractAddresses = [contractAddress as `0x${string}`];
+const startTimestamp = Math.floor(Date.now() / 1000).toString();
+const durationDays = "10";
+
+const eip712 = fhevmInstance.createEIP712(
+  keypair.publicKey,
+  contractAddresses,
+  startTimestamp,
+  durationDays
+);
+
+// Sign with user's wallet
+const signature = await ethersSigner.signTypedData(
+  eip712.domain,
+  { UserDecryptRequestVerification: eip712.types.UserDecryptRequestVerification },
+  eip712.message
+);
+```
+
+**Key Points:**
+- EIP712 provides structured data signing for better security
+- The signature authorizes the decryption request
+- `startTimestamp` and `durationDays` define the validity period
+- The signature must be created by the wallet owner
+
+#### 4. Decrypt
+
+Decrypt the encrypted handle:
+
+```typescript
+// For local network, remove "0x" prefix from signature
+const signatureForDecrypt = chainId === 31337 
+  ? signature.replace("0x", "") 
+  : signature;
+
+// Decrypt using FHEVM instance
+const decryptedResult = await fhevmInstance.userDecrypt(
+  [{ handle: normalizedHandle, contractAddress }],
+  keypair.privateKey,
+  keypair.publicKey,
+  signatureForDecrypt,
+  contractAddresses,
+  userAddress as `0x${string}`,
+  startTimestamp,
+  durationDays
+);
+
+// Extract decrypted value
+const decryptedValue = Number(decryptedResult[normalizedHandle] || 0);
+```
+
+**Key Points:**
+- Local network (31337) requires signature without "0x" prefix
+- Sepolia testnet requires signature with "0x" prefix
+- `userDecrypt()` returns a map of handle to decrypted value
+- The decrypted value is a number representing the total
+
+### Key Encryption/Decryption Details
+
+#### Encryption Types
+
+- **`euint32`**: Encrypted 32-bit unsigned integer (internal contract format)
+- **`externalEuint32`**: External format for passing encrypted values as function parameters
+- **Handle Format**: 66 characters (0x + 64 hex characters)
+
+#### FHE Operations
+
+- **`FHE.fromExternal()`**: Converts external encrypted value to internal format and verifies proof
+- **`FHE.add()`**: Performs encrypted addition on-chain without decrypting
+- **`FHE.allow()`**: Grants decryption permissions to specific addresses
+- **`FHE.allowThis()`**: Grants decryption permission to the contract itself
+
+#### Permission Model
+
+- Only the contract and the user can decrypt encrypted values
+- Permissions are set automatically when data is added
+- Each encrypted value has its own permission set
+- Permissions persist across transactions
+
+#### Network-Specific Behavior
+
+- **Localhost (31337)**: Uses `@fhevm/mock-utils` for local testing
+  - Signature format: Remove "0x" prefix
+  - No relayer required
+  - Faster for development
+- **Sepolia (11155111)**: Uses `@zama-fhe/relayer-sdk` with Zama's FHE relayer
+  - Signature format: Keep "0x" prefix
+  - Requires relayer for decryption
+  - Production-ready
 
 ## 🧪 Testing
 
@@ -333,7 +553,7 @@ npx hardhat verify --network sepolia <CONTRACT_ADDRESS>
 - **Vite** - Build tool
 - **Tailwind CSS** - Styling
 - **shadcn-ui** - UI components
-- **RainbowKit** - Wallet connection
+- **RainbowKit** - Wallet connection (with English locale)
 - **wagmi** - Ethereum React Hooks
 - **FHEVM Relayer SDK** - FHE encryption/decryption
 
@@ -365,6 +585,15 @@ If you see "Contract not deployed" errors:
 2. Deploy the contract: `npx hardhat deploy --network localhost`
 3. Copy the contract address to `ui/.env.local`
 4. Restart the frontend dev server
+
+### FHEVM Not Initialized
+
+If you see "FHEVM instance not initialized" errors:
+
+1. Check your network connection
+2. Ensure you're connected to the correct network (localhost or Sepolia)
+3. Wait a few seconds for FHEVM to initialize
+4. Refresh the page if the issue persists
 
 ## 📄 License
 
